@@ -1,0 +1,23 @@
+# Production-like local run with a real MongoDB:  docker compose up --build   ->  http://localhost:3000
+services:
+  mongo:
+    image: mongo:7
+    volumes: [mongo-data:/data/db]
+  api:
+    build: ./backend
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: job_os
+      JWT_SECRET: change-me-to-a-long-random-string-in-production
+      SEED_DEMO: "true"
+      DEMO_MODE: "true"
+    depends_on: [mongo]
+    ports: ["8010:8010"]
+  web:
+    build: ./frontend
+    environment:
+      VITE_API_PROXY: http://api:8010
+    depends_on: [api]
+    ports: ["3000:3000"]
+volumes:
+  mongo-data:
