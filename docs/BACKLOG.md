@@ -18,7 +18,10 @@ Each item has its own card with a ready prompt on the in-app "Build next" page. 
 | Technician app | Today's jobs; on my way → on site → working → finish; checklist; photos; parts; signature; finishing is blocked until the checklist and signature are done |
 | Invoices & payments | Invoice from the job; deposit applied; pay by link (demo checkout) or record a payment; reminders |
 | Plans | Plans and memberships; selling a plan books its first visit |
-| Owner | Home (brief, tiles, today), simple reports, settings (name, brand, tax, deposit), team list |
+| Messages | Two-way texting: conversations per customer, unread counts, send and receive through Twilio (`send_sms`, inbound webhook `/api/public/sms/inbound/{slug}`); every automatic text lands in the same conversation |
+| Ask | "Ask about your business" on every office page: knows the page and the open job/customer/invoice; uses the connected AI provider, and answers the common questions from the data without one |
+| AI visibility | Asks each connected AI assistant "best <trade> in <town>", records whether the business is named, keeps the history |
+| Owner | Home (brief, tiles, today), simple reports, settings (name, brand, tax, deposit, connections), team list |
 
 ## Next, in order
 | # | Feature | Why (evidence) | Done when |
@@ -33,7 +36,7 @@ Each item has its own card with a ready prompt on the in-app "Build next" page. 
 | 8 | **Van stock & parts** | Int: 15 builders | Parts deducted once on completion; no negative stock; low-stock list → purchase order |
 | 9 | **Commission & payroll export** | Int: 18 builders | Rules by category; pay period locked after export |
 | 10 | **Roles & permissions matrix** | Int: 23 builders (the most-asked core need) | Per-role switches enforced by the API, not just hidden in the UI |
-| 11 | **Payments, SMS/WhatsApp & accounting connections** | Needed to go live | Stripe Connect, Twilio/WhatsApp, QuickBooks/Xero behind a live/simulated switch; see `INTEGRATIONS.md` |
+| 11 | **Payments, WhatsApp & accounting connections** | Needed to go live (SMS is already live with Twilio keys) | Stripe Connect, WhatsApp, QuickBooks/Xero; see `INTEGRATIONS.md` |
 | 12 | **Resell as SaaS** (tenants, plans, trials) | Int: 22 builders, $201k paid (founders) | Tenant admin, plan limits, trials; isolation tested |
 | 13 | **Country packs** (UK certificates, India GST/AMC/WhatsApp, EU e-invoice) | Int: 13 builders (regional) | Pack switches tax, numbering, documents and adapters; the core unchanged |
 

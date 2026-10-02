@@ -1,18 +1,18 @@
 # Integrations: what to connect, by stage
 
-In the template, every third party is **simulated**:
-- texts are logged;
-- the checkout is a demo;
-- nothing leaves the machine.
+What works as soon as keys are added (set them as secrets where the app runs; Settings → Connections shows the status):
+- **SMS (Twilio):** `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` (optional `SMS_COUNTRY_CODE`, default 1). Point the number's "A message comes in" webhook at `<api>/api/public/sms/inbound/<slug>`; signatures are checked (set `PUBLIC_API_URL` if behind a proxy). Without keys, texts are saved and marked "not delivered".
+- **AI (Ask + AI visibility):** any of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY` (models can be changed with `*_MODEL`). Without one, Ask answers the common questions from the data and AI visibility asks the owner to connect one.
 
-Connect them per customer when they go live. Full research, with prices and lead times (some items still to verify): `research/integrations-field-service.md`.
+Payments are still a demo checkout; connect the rest per customer when they go live. Full research, with prices and lead times (some items still to verify): `research/integrations-field-service.md`.
 
 | Powers | Default provider | Regional alternatives | Template | Going live needs |
 |---|---|---|---|---|
 | Payments (links, card on file, deposits) | Stripe Connect | Razorpay/UPI (IN), Mercado Pago/Pix (LATAM), GoCardless (direct debit) | Demo checkout | Stripe platform account + Connect review (days) |
-| SMS, missed-call text-back | Twilio | Telnyx; Exotel (India, Twilio has no Indian numbers) | Logged | US A2P 10DLC (1–3 weeks) or toll-free verification (days) |
+| SMS, two-way texting, missed-call text-back | Twilio | Telnyx; Exotel (India, Twilio has no Indian numbers): swap `send_sms()` | Live with keys | US A2P 10DLC (1–3 weeks) or toll-free verification (days) |
 | WhatsApp | WhatsApp Cloud API (each business connects its own number) | Same everywhere | — | Meta business verification + Tech Provider + App Review (1–4+ weeks): start first |
-| AI receptionist / assistant | LLM (Emergent key) + Twilio voice (Retell/Vapi) | Exotel (IN) | — | Phone numbers per region |
+| AI assistant (Ask), AI visibility | OpenAI / Anthropic / Gemini / Perplexity | — | Live with keys |
+| AI receptionist (voice) | LLM + Twilio voice (Retell/Vapi) | Exotel (IN) | — | Phone numbers per region |
 | Accounting | QuickBooks Online, Xero | Zoho Books / Tally export (IN), MYOB (AU), DATEV export (DE) | — | OAuth app registration |
 | Maps & routes | Google Places / Routes (free tier) | OSRM, Ola Maps / Mappls (IN) | — | API key |
 | Financing on quotes | Wisetack (US) | V12 / Klarna (UK), Humm / Zip (AU), Razorpay EMI (IN) | — | Partner agreement (weeks) |

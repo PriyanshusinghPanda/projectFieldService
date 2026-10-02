@@ -240,6 +240,7 @@ function MessageRow({ m }) {
     <div className="cd-msg">
       <div className="row" style={{ gap: 8, marginBottom: 3 }}>
         <Pill tone={m.channel === "email" ? "blue" : "grey"}>{m.channel === "sms" ? "SMS" : m.channel === "email" ? "Email" : m.channel}</Pill>
+        <span className="muted small">{m.direction === "in" ? "From customer" : m.status === "sent" ? "Sent" : "Not delivered"}</span>
         {m.template && <span className="muted small" style={{ textTransform: "capitalize" }}>{m.template.replace(/_/g, " ")}</span>}
         <div className="spacer" />
         <span className="muted small">{ago(m.created_at)}</span>

@@ -77,9 +77,9 @@ const FEATURES = [
     ],
     prompt: `Add an AI receptionist for missed calls.
 - Backend (backend/server.py): add a helper that computes free slots for the next 3 days from existing scheduled jobs and team working hours (techs with the right skill for the trade).
-- Add POST /api/webhooks/missed-call (from Twilio) that creates a lead with channel "missed_call", then sends an SMS offering 3 real free slots. Add POST /api/webhooks/sms for replies: use the Emergent LLM key to understand the reply ("the second one", "Tuesday morning"), book the job with the existing schedule logic, confirm by SMS, and record each message on the lead.
-- Keep a simulator endpoint POST /api/leads/{id}/simulate-reply so it can be demoed without Twilio.
-- Frontend: in frontend/src/pages/Inbox.jsx show the conversation thread and a "Booked by assistant" pill, plus a "Simulate customer reply" box on the lead detail.`,
+- Add POST /api/public/calls/missed/{slug} (Twilio voice status callback) that creates a lead with channel "missed_call", then texts 3 real free slots with the existing log_message() (it already sends through Twilio).
+- Replies already arrive at POST /api/public/sms/inbound/{slug}. After storing the message there, if the sender is an open lead, use the AI provider (the existing complete() helper) to understand the reply ("the second one", "Tuesday morning"), book the job with the existing schedule logic and confirm by text.
+- Frontend: on frontend/src/pages/Inbox.jsx show a "Booked by assistant" pill on the lead and link to its conversation in Messages.`,
   },
   {
     name: "Map view & route optimisation",
@@ -174,13 +174,13 @@ const FEATURES = [
     why: "Getting paid by card, texting customers and syncing the books are what make it real.",
     does: [
       "Stripe payment links, card on file and deposits on quote approval",
-      "Twilio SMS and WhatsApp for confirmations, on-my-way and reminders",
+      "WhatsApp alongside the built-in SMS (Twilio) for confirmations and reminders",
       "Invoices and payments synced to QuickBooks or Xero",
     ],
     prompt: `Connect real payments, messaging and accounting.
 - Backend (backend/server.py): add an "integrations" section to org settings storing API keys/OAuth tokens per provider (never return secrets to the frontend).
 - Stripe: create a Checkout/Payment Link for the public pay page and quote deposits; add POST /api/webhooks/stripe that records the payment against the invoice using the existing payments logic.
-- Twilio / WhatsApp Cloud API: add one send_message(org, to, body) helper used wherever the app currently "sends" a text (on my way, quote sent, invoice reminder), and store each message on the customer.
+- WhatsApp Cloud API: SMS already goes through send_sms() in backend/server.py and replies arrive at /api/public/sms/inbound/{slug}. Add a WhatsApp branch to send_sms() (per customer preference) and accept WhatsApp webhooks on the same inbound route with channel "whatsapp".
 - QuickBooks/Xero: OAuth connect, then push customers, invoices and payments when they are created/paid; keep a sync log with retry.
 - Frontend: an "Integrations" card in frontend/src/pages/Settings.jsx with connect/disconnect and status for each provider, and a sync status pill on frontend/src/pages/InvoiceDetail.jsx.`,
   },

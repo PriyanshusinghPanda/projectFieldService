@@ -73,8 +73,9 @@ export function PaymentModal({ invoice, onClose, onDone }) {
 
 export function LateBadge({ inv }) {
   if (!isOpen(inv)) return null;
-  if (inv.days_overdue > 0) return <Pill tone={inv.days_overdue > 14 ? "red" : "amber"}>{inv.days_overdue} {inv.days_overdue === 1 ? "day" : "days"} late</Pill>;
   const left = Math.round((new Date(inv.due_on + "T12:00:00") - new Date(localISODate() + "T12:00:00")) / 86400000);
+  const late = inv.days_overdue ?? -left; // the invoice detail response has no days_overdue
+  if (late > 0) return <Pill tone={late > 14 ? "red" : "amber"}>{late} {late === 1 ? "day" : "days"} late</Pill>;
   return <span className="muted small">{left === 0 ? "Due today" : `Due in ${left} d`}</span>;
 }
 

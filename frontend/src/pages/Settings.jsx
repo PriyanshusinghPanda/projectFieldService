@@ -98,6 +98,30 @@ function BusinessForm({ org, isOwner, onSaved }) {
   );
 }
 
+function Connections() {
+  const { data } = useApi("/api/integrations");
+  if (!data) return null;
+  const hook = `${(import.meta.env.REACT_APP_BACKEND_URL || window.location.origin).replace(/\/$/, "")}${data.inbound_webhook}`;
+  const row = (name, on, detail, setup) => (
+    <div className="row" style={{ alignItems: "flex-start", gap: 12, padding: "12px 0", borderTop: "1px solid var(--line)" }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 600 }}>{name}</div>
+        <div className="muted small">{on ? detail : setup}</div>
+      </div>
+      <Pill tone={on ? "green" : "grey"}>{on ? "Connected" : "Not connected"}</Pill>
+    </div>
+  );
+  return (
+    <Card title="Connections" actions={<span className="muted small">Added as secrets where the app is hosted</span>} style={{ marginTop: 14 }}>
+      {row("Text messaging (Twilio)", data.sms,
+        <>Sending from {data.sms_from}. Customer replies arrive at <code>{hook}</code> (set as the number's "A message comes in" webhook).</>,
+        <>Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER, then set <code>{hook}</code> as the number's incoming-message webhook.</>)}
+      {row("AI assistant", data.ai, <>Using {data.ai_engines.join(", ")} for Ask and AI visibility.</>,
+        <>Add any of OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY or PERPLEXITY_API_KEY. Without one, Ask still answers the common questions from your data.</>)}
+    </Card>
+  );
+}
+
 export default function Settings() {
   const { user, refresh } = useAuth();
   const { data, error, reload } = useApi("/api/settings");
@@ -106,10 +130,11 @@ export default function Settings() {
 
   return (
     <div className="page">
-      <PageHead title="Make it yours" sub="Your business details, brand, tax and deposit">
+      <PageHead title="Make it yours" sub="Your business details, brand, tax, deposit and connections">
         {!isOwner && <Pill tone="amber">View only · owner can edit</Pill>}
       </PageHead>
       {error ? <ErrorBox error={error} /> : !data ? <Loading /> : <BusinessForm org={data.org} isOwner={isOwner} onSaved={onSaved} />}
+      <Connections />
     </div>
   );
 }

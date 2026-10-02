@@ -1,8 +1,8 @@
 """Demo data: a fictional HVAC + plumbing business, "Summit Heating & Plumbing". All names and numbers are made up."""
 import random
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
-from server import col, hash_pw, insert, line, make_invoice, new_id, new_job, number, pay, quote_options, update
+from server import col, hash_pw, phone_key, insert, line, make_invoice, new_id, new_job, number, pay, quote_options, update
 
 R = random.Random(7)
 TEAM = [("Jordan Lee", "owner@summit.demo", "owner", []), ("Casey Morgan", "office@summit.demo", "office", []),
@@ -45,7 +45,7 @@ async def seed():
                                    "perks": ["Annual water heater flush", "Drain check"]})
     custs = []
     for i, name in enumerate(PEOPLE):
-        c = await insert("customers", org_id, {"name": name, "type": "business" if "Dental" in name else "residential", "phone": f"(555) 02{i:02d}-{R.randint(1000, 9999)}",
+        c = await insert("customers", org_id, {"name": name, "type": "business" if "Dental" in name else "residential", "phone": f"(555) 2{i:02d}-{R.randint(1000, 9999)}",
                                                "email": f"customer{i}@example.com", "prefers": "sms", "tags": [], "tax_exempt": False,
                                                "source": SOURCES[i % len(SOURCES)], "public_token": new_id() + new_id()[:8]})
         s = await insert("sites", org_id, {"customer_id": c["id"], "label": "Home", "address": f"{100 + i * 37} {STREETS[i]}", "city": "Denver, CO",
@@ -94,7 +94,16 @@ async def seed():
     # inbox
     for name, ch, svc, msg, mins in [("Tom Reyes", "missed_call", "No heat", "Missed call at 9:14pm", 640), ("Lucia Ford", "web_booking", "AC tune-up", "Saturday if possible", 180),
                                      ("Harbor Yoga Studio", "google_lsa", "Water heater", "Water heater leaking", 95), ("Mia Chen", "angi", "Thermostat install", "Smart thermostat", 20)]:
-        await insert("leads", org_id, {"name": name, "phone": f"(555) 03{R.randint(10, 99)}-{R.randint(1000, 9999)}", "channel": ch, "source": ch, "service": svc,
+        await insert("leads", org_id, {"name": name, "phone": f"(555) 3{R.randint(10, 99)}-{R.randint(1000, 9999)}", "channel": ch, "source": ch, "service": svc,
                                        "message": msg, "status": "new", "auto_replied": ch == "missed_call",
                                        "created_at": (datetime.now() - timedelta(minutes=mins)).isoformat(timespec="seconds")})
+    # a few text conversations (starter content)
+    for (c, s_, e), convo in [(custs[2], [("out", "Summit Heating: your quote Q-1001 is ready. Tap to view and approve."),
+                                          ("in", "Thanks! Is the new system the quieter one?"), ("out", "Yes, it's a 16 SEER2 unit, much quieter than your current one.")]),
+                              (custs[3], [("out", "Summit Heating: Nina is on the way and should arrive in about 20 minutes."), ("in", "Great, the side gate is open.")]),
+                              (custs[4], [("in", "Hi, my invoice says due today, can I pay by card?")])]:
+        for i, (d, body) in enumerate(convo):
+            await insert("messages", org_id, {"channel": "sms", "direction": d, "contact": phone_key(c["phone"]), "phone": c["phone"], "body": body,
+                                              "status": "sent" if d == "out" else "received", "related": {}, "read": d == "out" or i < len(convo) - 1,
+                                              "created_at": (datetime.now(timezone.utc) - timedelta(minutes=90 - i * 7 - len(c["name"]))).isoformat()})
     return org_id

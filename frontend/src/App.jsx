@@ -19,6 +19,8 @@ import Reports from "./pages/Reports";
 import Team from "./pages/Team";
 import Settings from "./pages/Settings";
 import BuildNext from "./pages/BuildNext";
+import Messages from "./pages/Messages";
+import AIVisibility from "./pages/AIVisibility";
 import TechToday from "./pages/tech/TechToday";
 import TechJob from "./pages/tech/TechJob";
 import QuoteApprove from "./pages/public/QuoteApprove";
@@ -59,6 +61,8 @@ export default function App() {
       <Route element={<Office><Layout /></Office>}>
         <Route path="/" element={<Home />} />
         <Route path="/inbox" element={<Inbox />} />
+        <Route path="/messages" element={<Messages />} />
+        <Route path="/ai-visibility" element={<AIVisibility />} />
         <Route path="/customers" element={<Customers />} />
         <Route path="/customers/:id" element={<CustomerDetail />} />
         <Route path="/quotes" element={<Quotes />} />

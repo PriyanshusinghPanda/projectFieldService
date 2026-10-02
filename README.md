@@ -35,6 +35,11 @@ every route under `/api`) and MongoDB. This template already has that shape:
 4. **Schedule:** a board that blocks double booking.
 5. **Technician app** (`/tech`): on my way, checklist, photos and signature before a job can finish.
 6. **Invoices and payments:** a demo checkout; plans and memberships; a simple owner home and reports.
+7. **Messages:** two-way texting with customers through Twilio; replies come in on a webhook.
+8. **Ask about your business:** on every page; knows the page and the record you're on.
+9. **AI visibility:** checks whether ChatGPT, Claude, Gemini or Perplexity recommend the business for its trade and town.
+
+Connect text messaging and AI by adding keys (see `backend/.env.example` and `docs/INTEGRATIONS.md`); Settings → Connections shows what's connected.
 
 ## What owners build next (on Emergent)
 The **Build next** page in the app lists what field-service owners ask for most, each with a ready-to-paste prompt:

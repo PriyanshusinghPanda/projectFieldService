@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import bcrypt
 import jwt
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 SECRET = os.getenv("JWT_SECRET", "dev-only-change-me-set-JWT_SECRET-in-production")
@@ -83,8 +83,41 @@ async def number(org, kind, prefix):
     return f"{prefix}{1000 + r['n']}"
 
 
-async def log_message(org, to, body, related=None):
-    await insert("messages", org["id"], {"channel": "sms", "to": to, "body": body, "status": "logged", "related": related or {}})
+def phone_key(p):
+    """One key per phone number however it is typed: the last 10 digits ("(303) 555-0142" == "+13035550142")."""
+    return "".join(ch for ch in str(p or "") if ch.isdigit())[-10:]
+
+
+def e164(p):
+    d = "".join(ch for ch in str(p or "") if ch.isdigit())
+    return "+" + d if str(p).strip().startswith("+") else "+" + os.getenv("SMS_COUNTRY_CODE", "1") + d[-10:]
+
+
+def sms_connected():
+    return all(os.getenv(k) for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"))
+
+
+async def send_sms(to, body):
+    """Sends through Twilio when TWILIO_* is set. Returns (status, error). Swap this function to use another provider."""
+    if not sms_connected():
+        return "not_sent", "Text messaging is not connected"
+    import httpx
+    sid = os.environ["TWILIO_ACCOUNT_SID"]
+    try:
+        async with httpx.AsyncClient(timeout=15) as h:
+            r = await h.post(f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json", auth=(sid, os.environ["TWILIO_AUTH_TOKEN"]),
+                             data={"To": e164(to), "From": os.environ["TWILIO_FROM_NUMBER"], "Body": body})
+        return ("sent", None) if r.status_code < 300 else ("failed", r.json().get("message", f"Twilio error {r.status_code}"))
+    except Exception as e:  # a network error must not break the action that triggered the text
+        return "failed", str(e)
+
+
+async def log_message(org, to, body, related=None, by=None):
+    """Every outbound text: sent through the SMS provider and kept in the customer's conversation."""
+    status, error = await send_sms(to, body)
+    return await insert("messages", org["id"], {"channel": "sms", "direction": "out", "contact": phone_key(to), "phone": to, "body": body,
+                                                "status": status, "error": error, "related": related or {}, "by": by, "read": True,
+                                                "created_at": datetime.now(timezone.utc).isoformat()})
 
 
 # ---------------------------------------------------------------- auth
@@ -383,7 +416,7 @@ async def customer(cid: str, c: Ctx = Depends(ctx)):
     return {**cust, "sites": await find("sites", c.org_id, {"customer_id": cid}), "equipment": await find("equipment", c.org_id, {"customer_id": cid}),
             "jobs": await find("jobs", c.org_id, {"customer_id": cid}, sort=[("created_at", -1)]), "invoices": invs,
             "quotes": await find("quotes", c.org_id, {"customer_id": cid}), "memberships": await find("memberships", c.org_id, {"customer_id": cid}),
-            "messages": await find("messages", c.org_id, {"to": cust.get("phone")}, sort=[("created_at", -1)], limit=20),
+            "messages": await find("messages", c.org_id, {"contact": phone_key(cust.get("phone"))}, sort=[("created_at", -1)], limit=20),
             "balance_cents": sum(i["balance_cents"] for i in invs if i["status"] != "paid"), "lifetime_cents": sum(i["amount_paid_cents"] for i in invs)}
 
 
@@ -849,3 +882,269 @@ async def book(slug: str, body: dict):
                                              "service": body.get("service"), "message": body.get("message", ""), "preferred_window": body.get("window"),
                                              "channel": "web_booking", "source": "website", "status": "new"})
     return {"ok": True, "reference": lead["id"][:8].upper()}
+
+
+# ---------------------------------------------------------------- messages: two-way texting
+@app.get("/api/integrations")
+async def integrations(c: Ctx = Depends(office)):
+    """What is connected, so screens can say so plainly instead of failing silently."""
+    return {"sms": sms_connected(), "sms_from": os.getenv("TWILIO_FROM_NUMBER") if sms_connected() else None,
+            "inbound_webhook": f"/api/public/sms/inbound/{c.org['slug']}", "ai": bool(ai_engines()),
+            "ai_engines": [e["name"] for e in ai_engines()]}
+
+
+async def contacts(org_id):
+    out = {}
+    for kind in ("leads", "customers"):  # customers win over leads with the same number
+        for x in await find(kind, org_id):
+            if x.get("phone"):
+                out[phone_key(x["phone"])] = {"name": x["name"], "phone": x["phone"], f"{kind[:-1]}_id": x["id"]}
+    return out
+
+
+@app.get("/api/inbox/threads")
+async def threads(c: Ctx = Depends(office)):
+    known, out = await contacts(c.org_id), {}
+    for m in await find("messages", c.org_id, {"contact": {"$nin": [None, ""]}}, sort=[("created_at", 1)]):
+        t = out.setdefault(m["contact"], {"contact": m["contact"], "name": m.get("phone") or m["contact"], "phone": m.get("phone"),
+                                          **known.get(m["contact"], {}), "unread": 0})
+        t["last"] = {"body": m["body"], "at": m["created_at"], "direction": m["direction"], "status": m["status"]}
+        t["unread"] += 0 if m.get("read", True) else 1
+    return sorted(out.values(), key=lambda t: t["last"]["at"], reverse=True)
+
+
+@app.get("/api/inbox/threads/{contact}")
+async def thread(contact: str, c: Ctx = Depends(office)):
+    contact = phone_key(contact)
+    await col("messages").update_many({"org_id": c.org_id, "contact": contact, "read": False}, {"$set": {"read": True}})
+    msgs = await find("messages", c.org_id, {"contact": contact}, sort=[("created_at", 1)])
+    who = (await contacts(c.org_id)).get(contact, {})
+    return {"contact": contact, "name": who.get("name") or (msgs[-1].get("phone") if msgs else contact),
+            "phone": who.get("phone") or (msgs[-1].get("phone") if msgs else contact), **who, "messages": msgs}
+
+
+@app.post("/api/inbox/send")
+async def send_text(body: dict, c: Ctx = Depends(office)):
+    text = (body.get("body") or "").strip()
+    if not phone_key(body.get("to")) or not text:
+        raise HTTPException(400, "A phone number and a message are required")
+    if len(text) > 1600:
+        raise HTTPException(400, "Messages are limited to 1600 characters")
+    return await log_message(c.org, body["to"], text, by=c.user["name"])
+
+
+def twilio_signature_ok(request, params):
+    token = os.getenv("TWILIO_AUTH_TOKEN")
+    if not token:
+        return True
+    import base64
+    import hashlib
+    import hmac
+    url = (os.getenv("PUBLIC_API_URL", "").rstrip("/") + request.url.path) if os.getenv("PUBLIC_API_URL") else str(request.url)
+    signed = url + "".join(k + params[k] for k in sorted(params))
+    expected = base64.b64encode(hmac.new(token.encode(), signed.encode(), hashlib.sha1).digest()).decode()
+    return hmac.compare_digest(expected, request.headers.get("X-Twilio-Signature", ""))
+
+
+@app.post("/api/public/sms/inbound/{slug}")
+async def inbound_sms(slug: str, request: Request):
+    """Customer replies arrive here. Point your Twilio number's "A message comes in" webhook at this URL.
+    Accepts Twilio's form post (From, Body) or JSON {"from", "body"} from any other provider."""
+    from urllib.parse import parse_qsl
+    raw = await request.body()
+    is_form = "json" not in request.headers.get("content-type", "")
+    if is_form:
+        params = dict(parse_qsl(raw.decode()))
+        if not twilio_signature_ok(request, params):
+            raise HTTPException(403, "Bad signature")
+        sender, text = params.get("From"), params.get("Body")
+    else:
+        import json as _json
+        data = _json.loads(raw or b"{}")
+        if os.getenv("INBOUND_SECRET") and request.headers.get("X-Inbound-Secret") != os.getenv("INBOUND_SECRET"):
+            raise HTTPException(403, "Bad secret")
+        sender, text = data.get("from"), data.get("body")
+    org = await col("orgs").find_one({"slug": slug}, {"_id": 0})
+    if not org or not phone_key(sender) or not (text or "").strip():
+        raise HTTPException(400, "from and body required")
+    await insert("messages", org["id"], {"channel": "sms", "direction": "in", "contact": phone_key(sender), "phone": sender, "body": text.strip(),
+                                         "status": "received", "related": {}, "read": False, "created_at": datetime.now(timezone.utc).isoformat()})
+    if is_form:  # Twilio expects TwiML back; an empty response means "no auto-reply"
+        return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', media_type="application/xml")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- AI: "Ask" on every page, and the AI visibility check
+def ai_engines():
+    """Each configured AI provider. Ask uses the first; the visibility check asks all of them."""
+    out = []
+    if os.getenv("OPENAI_API_KEY"):
+        out.append({"name": "ChatGPT", "kind": "openai", "url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                    "key": os.environ["OPENAI_API_KEY"], "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini")})
+    if os.getenv("ANTHROPIC_API_KEY"):
+        out.append({"name": "Claude", "kind": "anthropic", "key": os.environ["ANTHROPIC_API_KEY"], "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")})
+    if os.getenv("GEMINI_API_KEY"):
+        out.append({"name": "Gemini", "kind": "openai", "url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                    "key": os.environ["GEMINI_API_KEY"], "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash")})
+    if os.getenv("PERPLEXITY_API_KEY"):
+        out.append({"name": "Perplexity", "kind": "openai", "url": "https://api.perplexity.ai", "key": os.environ["PERPLEXITY_API_KEY"],
+                    "model": os.getenv("PERPLEXITY_MODEL", "sonar")})
+    return out
+
+
+async def complete(engine, system, prompt):
+    import httpx
+    async with httpx.AsyncClient(timeout=45) as h:
+        if engine["kind"] == "anthropic":
+            r = await h.post("https://api.anthropic.com/v1/messages", headers={"x-api-key": engine["key"], "anthropic-version": "2023-06-01"},
+                             json={"model": engine["model"], "max_tokens": 800, "system": system, "messages": [{"role": "user", "content": prompt}]})
+            r.raise_for_status()
+            return r.json()["content"][0]["text"]
+        r = await h.post(f"{engine['url']}/chat/completions", headers={"Authorization": f"Bearer {engine['key']}"},
+                         json={"model": engine["model"], "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]})
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+
+
+async def business_snapshot(c):
+    today = date.today().isoformat()
+    names = {x["id"]: x["name"] for x in await find("customers", c.org_id)}
+    techs = {u["id"]: u["name"] for u in await find("users", c.org_id, {"role": "tech"})}
+    invs = await find("invoices", c.org_id, {"status": {"$in": ["open", "partially_paid"]}})
+    jobs = await find("jobs", c.org_id)
+    month = today[:7]
+    return {"today": today, "business": c.org["name"],
+            "overdue": [{"customer": names.get(i["customer_id"], ""), "number": i["number"], "balance_cents": i["balance_cents"], "due_on": i["due_on"], "id": i["id"]}
+                        for i in invs if i["due_on"] < today],
+            "unpaid_cents": sum(i["balance_cents"] for i in invs),
+            "paid_this_month_cents": sum(p["amount_cents"] for p in await find("payments", c.org_id) if (p.get("created_at") or "")[:7] == month),
+            "today_jobs": [{"number": j["number"], "title": j["title"], "customer": names.get(j["customer_id"], ""), "status": j["status"],
+                            "techs": [techs.get(t, "") for t in j["assigned_tech_ids"]], "start": j["scheduled_start"], "id": j["id"]}
+                           for j in jobs if (j.get("scheduled_start") or "").startswith(today)],
+            "unscheduled": [{"number": j["number"], "title": j["title"], "customer": names.get(j["customer_id"], ""), "id": j["id"]} for j in jobs if j["status"] == "new"],
+            "quotes_waiting": [{"number": q["number"], "title": q["title"], "customer": names.get(q["customer_id"], ""), "status": q["status"], "id": q["id"]}
+                               for q in await find("quotes", c.org_id, {"status": {"$in": ["sent", "viewed"]}})],
+            "new_leads": [{"name": x["name"], "service": x.get("service"), "channel": x.get("channel")} for x in await find("leads", c.org_id, {"status": "new"})],
+            "unread_texts": await col("messages").count_documents({"org_id": c.org_id, "direction": "in", "read": False})}
+
+
+def dollars(cents):
+    return f"${cents / 100:,.2f}"
+
+
+def bullets(head, rows, empty):
+    return f"{head}\n- " + "\n- ".join(rows) if rows else empty
+
+
+def rule_answer(q, snap, record):
+    """Answers the questions owners ask most, straight from the data. Used when no AI provider is connected."""
+    q = q.lower()
+    if record and any(w in q for w in ("this", "summar", "status", "where")):
+        return record["summary"], [record["link"]]
+    if any(w in q for w in ("owe", "overdue", "unpaid", "late", "chase", "outstanding")):
+        rows = [f"{o['customer']} owes {dollars(o['balance_cents'])} ({o['number']}, due {o['due_on']})" for o in snap["overdue"]]
+        return bullets(f"{len(rows)} overdue invoice(s):", rows, f"Nothing is overdue. {dollars(snap['unpaid_cents'])} is open but not yet due."), \
+            [{"label": "Invoices", "to": "/invoices"}]
+    if any(w in q for w in ("revenue", "made", "earn", "collected", "this month")):
+        return f"{dollars(snap['paid_this_month_cents'])} collected this month; {dollars(snap['unpaid_cents'])} still unpaid.", [{"label": "Reports", "to": "/reports"}]
+    if any(w in q for w in ("today", "schedule", "on today", "visits", "where is")):
+        rows = [f"{(j['start'] or '')[11:16]} {j['customer']}: {j['title']} ({', '.join(j['techs']) or 'unassigned'}, {j['status'].replace('_', ' ')})"
+                for j in sorted(snap["today_jobs"], key=lambda j: j["start"] or "")]
+        return bullets(f"{len(rows)} visit(s) today:", rows, "Nothing is scheduled today."), [{"label": "Schedule", "to": "/schedule"}]
+    if any(w in q for w in ("quote", "estimate", "proposal")):
+        rows = [f"{x['number']} {x['customer']}: {x['title']} ({x['status']})" for x in snap["quotes_waiting"]]
+        return bullets(f"{len(rows)} quote(s) waiting on the customer:", rows, "No quotes are waiting on customers."), [{"label": "Quotes", "to": "/quotes"}]
+    if any(w in q for w in ("text", "message", "repl", "sms")):
+        return f"{snap['unread_texts']} unread text(s).", [{"label": "Messages", "to": "/messages"}]
+    if any(w in q for w in ("lead", "call", "enquir", "inquir", "request")):
+        rows = [f"{x['name']}: {x['service']} ({(x['channel'] or '').replace('_', ' ')})" for x in snap["new_leads"]]
+        return bullets(f"{len(rows)} new lead(s):", rows, "No new leads."), [{"label": "Inbox", "to": "/inbox"}]
+    if any(w in q for w in ("unscheduled", "not scheduled", "to book", "waiting")):
+        rows = [f"{j['number']} {j['customer']}: {j['title']}" for j in snap["unscheduled"]]
+        return bullets(f"{len(rows)} job(s) waiting to be scheduled:", rows, "Every job is scheduled."), [{"label": "Schedule", "to": "/schedule"}]
+    if any(w in q for w in ("visib", "chatgpt", "ai search", "google")):
+        return "AI visibility checks whether AI assistants recommend you for your trade and town.", [{"label": "AI visibility", "to": "/ai-visibility"}]
+    return ("I can answer: who owes me money, what's on today, which quotes are waiting, any new leads or texts, and how much we've "
+            "collected this month. On a job or customer page, ask \"summarise this\"."), []
+
+
+async def record_summary(c, page, rid):
+    if not rid:
+        return None
+    if page.startswith("/jobs/"):
+        j = await get("jobs", c.org_id, rid)
+        cust = await get("customers", c.org_id, j["customer_id"])
+        t = totals(j["lines"], c.org)
+        done = sum(1 for i in j.get("checklist", []) if i.get("done"))
+        return {"summary": f"{j['number']} {j['title']} for {cust['name']}: {j['status'].replace('_', ' ')}, {dollars(t['total_cents'])} total, "
+                           f"{done}/{len(j.get('checklist', []))} checklist items done, {'signed' if j.get('signature') else 'not signed yet'}.",
+                "link": {"label": j["number"], "to": f"/jobs/{rid}"}}
+    if page.startswith("/customers/"):
+        cust = await get("customers", c.org_id, rid)
+        invs = await find("invoices", c.org_id, {"customer_id": rid})
+        return {"summary": f"{cust['name']}: {len(await find('jobs', c.org_id, {'customer_id': rid}))} jobs, "
+                           f"{dollars(sum(i['amount_paid_cents'] for i in invs))} paid, {dollars(sum(i['balance_cents'] for i in invs))} owed.",
+                "link": {"label": cust["name"], "to": f"/customers/{rid}"}}
+    if page.startswith("/invoices/"):
+        inv = await get("invoices", c.org_id, rid)
+        cust = await get("customers", c.org_id, inv["customer_id"])
+        return {"summary": f"{inv['number']} for {cust['name']}: {dollars(inv['total_cents'])} total, {dollars(inv['balance_cents'])} still owed, "
+                           f"status {inv['status'].replace('_', ' ')}, due {inv['due_on']}.", "link": {"label": inv["number"], "to": f"/invoices/{rid}"}}
+    return None
+
+
+@app.post("/api/ai/ask")
+async def ask(body: dict, c: Ctx = Depends(office)):
+    q, page = (body.get("question") or "").strip(), body.get("page") or "/"
+    if not q:
+        raise HTTPException(400, "Type a question")
+    snap = await business_snapshot(c)
+    try:
+        record = await record_summary(c, page, body.get("record_id"))
+    except HTTPException:
+        record = None
+    engines = ai_engines()
+    if engines:
+        import json as _json
+        system = (f"You are the assistant inside {c.org['name']}'s field-service software. The user is on the page {page}. "
+                  "Answer in a few short lines using only the data given. Money values ending in _cents are in cents; show them as dollars. "
+                  "Never invent customers, prices or times; if the data doesn't answer the question, say what you can't see.")
+        try:
+            text = await complete(engines[0], system, f"Current record: {(record or {}).get('summary', 'none')}\nData: {_json.dumps(snap)}\n\nQuestion: {q}")
+            return {"answer": text, "links": [record["link"]] if record else [], "engine": engines[0]["name"]}
+        except Exception:
+            pass  # fall through to the built-in answers so the owner still gets something
+    answer, links = rule_answer(q, snap, record)
+    return {"answer": answer, "links": links, "engine": None}
+
+
+@app.get("/api/ai/visibility")
+async def visibility_history(c: Ctx = Depends(office)):
+    return await find("visibility_checks", c.org_id, sort=[("created_at", -1)], limit=20)
+
+
+@app.post("/api/ai/visibility")
+async def visibility_check(body: dict, c: Ctx = Depends(office)):
+    """Asks each connected AI assistant what a customer would ask ("best <trade> in <town>") and checks if this business is named."""
+    trade, town = (body.get("trade") or "").strip(), (body.get("town") or "").strip()
+    if not trade or not town:
+        raise HTTPException(400, "Enter your trade and your town")
+    engines = ai_engines()
+    if not engines:
+        raise HTTPException(409, "Connect at least one AI provider to run a check")
+    question = f"I need a {trade} company in {town}. Which local companies would you recommend? Name up to 5."
+    name = c.org["name"].lower()
+    short = name.split("&")[0].split(" and ")[0].strip()
+
+    async def one(e):
+        try:
+            text = await complete(e, "You are a helpful assistant answering a local consumer's question.", question)
+            return {"engine": e["name"], "mentioned": name in text.lower() or (len(short) > 4 and short in text.lower()), "answer": text}
+        except Exception as err:
+            return {"engine": e["name"], "mentioned": None, "error": str(err)[:200]}
+
+    import asyncio
+    results = await asyncio.gather(*[one(e) for e in engines])
+    ok = [r for r in results if r["mentioned"] is not None]
+    return await insert("visibility_checks", c.org_id, {"trade": trade, "town": town, "question": question, "results": results,
+                                                        "mentioned": sum(1 for r in ok if r["mentioned"]), "asked": len(ok)})

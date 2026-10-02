@@ -15,7 +15,7 @@
 | **Invoice** | number, job, lines (snapshot), totals, deposits_applied, amount_paid, balance, status, due_on, public_token |
 | **Payment** | kind (deposit / payment), amount_cents, method, invoice or quote |
 | **Plan / Membership** | plan: price, visits per year. Membership: customer, site, plan, status |
-| **Message** | logged texts (demo: nothing is sent) |
+| **Message** | one text in a conversation: `direction` in/out, `contact` (last 10 digits of the phone, so every format matches), `status` sent / not_sent / failed / received, `read` |
 
 ## Lifecycles
 - **Quote:** draft → sent → viewed → approved (locked; creates a job), or declined.
