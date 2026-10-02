@@ -53,7 +53,7 @@ The research behind it is in `docs/research/` and `docs/WHITE_LABEL_PLAN.md`.
 | Tests (the core journey) | `backend/tests/` |
 | Web app, tech app, customer pages | `frontend/src/pages/` |
 | What to build next (with prompts) | `frontend/src/pages/BuildNext.jsx` |
-| What the agent reads first | `AGENT_GUIDE.md` |
+| What the agent reads first | `AGENTS.md` |
 
 ## Tests
 ```
