@@ -1,5 +1,7 @@
 # Backlog: what to add, in order
 
+The full list of what field-service builders made, against what Job OS has, is in `research/feature-inventory.md`.
+
 This file tracks what's built and what to add next. The order comes from evidence:
 - **Int:** our 73 paying field-service builders, `research/internal-findings.md`.
 - **Ext:** owners' public wants, `research/external-wants.md` (provisional).
